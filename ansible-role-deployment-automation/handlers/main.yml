@@ -1,6 +1,17 @@
 ---
 # handlers file for ansible-role-deployment-automation
-- name: Remove temporary kind cluster configs directory
-  ansible.builtin.file:
-    path: "{{ __temp_dir.path }}"
-    state: absent
+- name: Update Helm repository cache for metallb
+  listen: update metallb helm repository cache
+  kubernetes.core.helm_repository:
+    name: metallb
+    repo_url: https://metallb.github.io/metallb
+    state: present
+    force_update: true
+
+- name: Update Helm repository cache for zabbix-community
+  listen: update zabbix-community helm repository cache
+  kubernetes.core.helm_repository:
+    name: zabbix-community
+    repo_url: https://zabbix-community.github.io/helm-zabbix
+    state: present
+    force_update: true
