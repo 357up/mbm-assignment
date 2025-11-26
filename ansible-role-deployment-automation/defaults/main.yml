@@ -1,0 +1,130 @@
+---
+# defaults file for ansible-role-deployment-automation
+
+# MetalLB configuration for the mgmt cluster.
+mgmt_cluster_metallb_namespace: metallb-system
+mgmt_cluster_metallb_ipaddresspools: []
+mgmt_cluster_metallb_ip_pool_name: mgmt-cluster-pool
+mgmt_cluster_metallb_ip_pool_size: 50
+mgmt_cluster_metallb_ip_pool_tail_reserve: 2
+podman_kind_network_name: kind
+mgmt_cluster_metallb_l2advertisements:
+  - name: mgmt-cluster
+    ipAddressPools:
+      - "{{ mgmt_cluster_metallb_ip_pool_name }}"
+
+# Helm release defaults for the mgmt cluster Zabbix deployment.
+mgmt_cluster_zabbix_release_name: zabbix
+mgmt_cluster_zabbix_namespace: zabbix
+mgmt_cluster_zabbix_helm_timeout: 600s
+mgmt_cluster_zabbix_chart_server_image_tag: ubuntu-7.0.16
+
+# Consolidated PostgreSQL access defaults for the Zabbix chart.
+mgmt_cluster_zabbix_postgres_access:
+  existingSecretName: ""
+  secretHostKey: host
+  secretPortKey: port
+  secretUserKey: user
+  secretPasswordKey: password
+  secretDBKey: dbname
+  secretSchemaKey: ""
+  host: "zabbix-postgresql"
+  port: "5432"
+  user: "zabbix"
+  password: "zabbix"
+  database: "zabbix"
+  schema: ""
+
+# Zabbix server service exposure defaults.
+mgmt_cluster_zabbix_server_service:
+  type: LoadBalancer
+  clusterIP: null
+  externalIPs: []
+  loadBalancerIP: ~
+  loadBalancerSourceRanges: []
+  loadBalancerClass: ""
+  sessionAffinity: None
+  port: 10051
+  nodePort: 31051
+  annotations: {}
+
+# Zabbix web service exposure defaults for the mgmt cluster.
+mgmt_cluster_zabbix_web_service:
+  type: LoadBalancer
+  clusterIP: null
+  externalIPs: []
+  loadBalancerIP: ~
+  loadBalancerSourceRanges: []
+  loadBalancerClass: ""
+  sessionAffinity: None
+  port: 80
+  nodePort: 31080
+  annotations: {}
+
+# Load balancer discovery defaults for the mgmt cluster Zabbix server service.
+mgmt_cluster_zabbix_server_service_name: "{{ mgmt_cluster_zabbix_release_name }}-zabbix-server"
+mgmt_cluster_zabbix_server_lb_wait_retries: 30
+mgmt_cluster_zabbix_server_lb_wait_delay: 10
+
+# Load balancer discovery defaults for the mgmt cluster Zabbix web service.
+mgmt_cluster_zabbix_web_service_name: "{{ mgmt_cluster_zabbix_release_name }}-zabbix-web"
+mgmt_cluster_zabbix_web_lb_wait_retries: 30
+mgmt_cluster_zabbix_web_lb_wait_delay: 10
+
+# Reverse proxy exposure for Zabbix web UI.
+zabbix_web_reverse_proxy_enabled: true
+zabbix_web_reverse_proxy_host_port: 8123
+zabbix_web_reverse_proxy_listen_port: 8080
+zabbix_web_reverse_proxy_container_name: zabbix-web-proxy
+zabbix_web_reverse_proxy_image: nginx:stable-alpine
+zabbix_web_reverse_proxy_network: "{{ podman_kind_network_name }}"
+zabbix_web_reverse_proxy_config_dir: "{{ ansible_env.HOME | default('/tmp') }}/.local/share/ansible-role-deployment-automation"
+zabbix_web_reverse_proxy_extra_args: []
+zabbix_web_reverse_proxy_target_scheme: http
+zabbix_web_reverse_proxy_target_port: "{{ mgmt_cluster_zabbix_web_service.port | default(80) }}"
+
+# Embedded PostgreSQL chart defaults for the Zabbix deployment.
+mgmt_cluster_zabbix_postgresql:
+  enabled: true
+  image:
+    repository: postgres
+    tag: 16
+    pullPolicy: IfNotPresent
+    pullSecrets: []
+  resources: {}
+  persistence:
+    enabled: false
+    existingClaimName: false
+    storageSize: 5Gi
+  service:
+    type: ClusterIP
+    clusterIP: null
+    port: 5432
+    annotations: {}
+  extraRuntimeParameters:
+    max_connections: 100
+  extraEnv: []
+  extraStatefulSetAnnotations: {}
+  extraStatefulSetLabels: {}
+  extraPodAnnotations: {}
+  extraPodLabels: {}
+  extraVolumeMounts: []
+  extraContainers: []
+  extraInitContainers: []
+  extraVolumes: []
+  extraPodSpecs: {}
+  securityContext: {}
+  livenessProbe: {}
+  readinessProbe: {}
+  startupProbe: {}
+  nodeSelector: {}
+
+# Helm release defaults for the infra cluster Zabbix proxy deployment.
+infra_cluster_zabbix_proxy_release_name: zabbix-proxy
+infra_cluster_zabbix_proxy_namespace: zabbix-proxy
+infra_cluster_zabbix_proxy_helm_timeout: 600s
+infra_cluster_zabbix_proxy_image_tag: ubuntu-7.0.16
+infra_cluster_zabbix_proxy_mode: 0
+infra_cluster_zabbix_proxy_hostname: zabbix-proxy
+infra_cluster_zabbix_proxy_server_port: 10051
+infra_cluster_zabbix_proxy_values_overrides: {}

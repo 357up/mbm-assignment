@@ -1,0 +1,39 @@
+{# Compose the Helm values document from role defaults with optional overrides. #}
+{% set zabbix_image_tag = mgmt_cluster_zabbix_chart_server_image_tag | default(None, true) %}
+{% set values = {} %}
+{% if zabbix_image_tag is not none %}
+{%   set values = values | combine({'zabbixImageTag': zabbix_image_tag}) %}
+{% endif %}
+{% if mgmt_cluster_zabbix_postgres_access is defined %}
+{%   set values = values | combine({'postgresAccess': mgmt_cluster_zabbix_postgres_access}, recursive=True) %}
+{% endif %}
+{% set zabbix_server_values = {} %}
+{% if zabbix_image_tag is not none %}
+{%   set zabbix_server_values = zabbix_server_values | combine({'image': {'tag': zabbix_image_tag}}, recursive=True) %}
+{% endif %}
+{% if mgmt_cluster_zabbix_server_service is defined %}
+{%   set zabbix_server_values = zabbix_server_values | combine({'service': mgmt_cluster_zabbix_server_service}, recursive=True) %}
+{% endif %}
+{% if mgmt_cluster_zabbix_server_overrides is defined %}
+{%   set zabbix_server_values = zabbix_server_values | combine(mgmt_cluster_zabbix_server_overrides, recursive=True) %}
+{% endif %}
+{% if zabbix_server_values %}
+{%   set values = values | combine({'zabbixServer': zabbix_server_values}, recursive=True) %}
+{% endif %}
+{% set zabbix_web_values = {} %}
+{% if mgmt_cluster_zabbix_web_service is defined %}
+{%   set zabbix_web_values = zabbix_web_values | combine({'service': mgmt_cluster_zabbix_web_service}, recursive=True) %}
+{% endif %}
+{% if mgmt_cluster_zabbix_web_overrides is defined %}
+{%   set zabbix_web_values = zabbix_web_values | combine(mgmt_cluster_zabbix_web_overrides, recursive=True) %}
+{% endif %}
+{% if zabbix_web_values %}
+{%   set values = values | combine({'zabbixWeb': zabbix_web_values}, recursive=True) %}
+{% endif %}
+{% if mgmt_cluster_zabbix_postgresql is defined %}
+{%   set values = values | combine({'postgresql': mgmt_cluster_zabbix_postgresql}, recursive=True) %}
+{% endif %}
+{% if mgmt_cluster_zabbix_values_overrides is defined %}
+{%   set values = values | combine(mgmt_cluster_zabbix_values_overrides, recursive=True) %}
+{% endif %}
+{{ values | to_nice_yaml(indent=2, sort_keys=False) }}

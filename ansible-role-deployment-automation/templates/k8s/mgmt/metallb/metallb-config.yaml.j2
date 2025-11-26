@@ -1,0 +1,72 @@
+{% set metallb_namespace = mgmt_cluster_metallb_namespace | default('metallb-system') %}
+{% set docs = namespace(first=true) %}
+{% for pool in mgmt_cluster_metallb_ipaddresspools | default([]) %}
+{% if not docs.first %}---
+{% endif %}
+{% set docs.first = false %}
+apiVersion: metallb.io/v1beta1
+kind: IPAddressPool
+metadata:
+  name: {{ pool.name }}
+  namespace: {{ pool.namespace | default(metallb_namespace) }}
+{% if pool.labels is defined %}
+  labels:
+{{ pool.labels | to_nice_yaml | indent(4, true) }}
+{% endif %}
+{% if pool.annotations is defined %}
+  annotations:
+{{ pool.annotations | to_nice_yaml | indent(4, true) }}
+{% endif %}
+spec:
+  addresses:
+{% for addr in pool.addresses | default([]) %}
+  - "{{ addr }}"
+{% endfor %}
+{% if pool.autoAssign is defined %}
+  autoAssign: {{ (pool.autoAssign | bool) | ternary('true', 'false') }}
+{% endif %}
+{% if pool.avoidBuggyIPs is defined %}
+  avoidBuggyIPs: {{ (pool.avoidBuggyIPs | bool) | ternary('true', 'false') }}
+{% endif %}
+{% if pool.serviceAllocation is defined %}
+  serviceAllocation:
+{{ pool.serviceAllocation | to_nice_yaml | indent(4, true) }}
+{% endif %}
+{% if pool.extra_spec is defined %}
+{{ pool.extra_spec | to_nice_yaml | indent(2, true) }}
+{% endif %}
+{% endfor %}
+{% for adv in mgmt_cluster_metallb_l2advertisements | default([]) %}
+{% if not docs.first %}---
+{% endif %}
+{% set docs.first = false %}
+apiVersion: metallb.io/v1beta1
+kind: L2Advertisement
+metadata:
+  name: {{ adv.name }}
+  namespace: {{ adv.namespace | default(metallb_namespace) }}
+{% if adv.labels is defined %}
+  labels:
+{{ adv.labels | to_nice_yaml | indent(4, true) }}
+{% endif %}
+{% if adv.annotations is defined %}
+  annotations:
+{{ adv.annotations | to_nice_yaml | indent(4, true) }}
+{% endif %}
+spec:
+{% if adv.ipAddressPools is defined %}
+  ipAddressPools:
+{% for pool_name in adv.ipAddressPools %}
+  - "{{ pool_name }}"
+{% endfor %}
+{% endif %}
+{% if adv.interfaces is defined %}
+  interfaces:
+{% for interface in adv.interfaces %}
+  - "{{ interface }}"
+{% endfor %}
+{% endif %}
+{% if adv.extra_spec is defined %}
+{{ adv.extra_spec | to_nice_yaml | indent(2, true) }}
+{% endif %}
+{% endfor %}

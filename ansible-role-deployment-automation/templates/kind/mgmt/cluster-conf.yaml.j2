@@ -1,0 +1,35 @@
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: "{{ mgmt_cluster_name | default('mgmt-cluster') }}"
+networking:
+  podSubnet: "{{ mgmt_cluster_pod_subnet | default('10.244.0.0/16') }}"
+  serviceSubnet: "{{ mgmt_cluster_service_subnet | default('10.96.0.0/12') }}"
+  apiServerAddress: "{{ mgmt_cluster_api_server_address | default('127.0.0.1') }}"
+  apiServerPort: {{ mgmt_cluster_api_server_port | default(16443) }}
+{% if mgmt_cluster_network_extra_config is defined %}
+{% for key, value in mgmt_cluster_network_extra_config.items() %}
+  {{ key }}: {{ value }}
+{% endfor %}
+{% endif %}
+nodes:
+{% for _ in range(mgmt_cluster_cp_count | default(1) | int) %}
+  - role: control-plane
+{%   if mgmt_cluster_control_plane_extra_config is defined %}
+{%     for key, value in mgmt_cluster_control_plane_extra_config.items() %}
+    {{ key }}: {{ value }}
+{%     endfor %}
+{%   endif %}
+{% endfor %}
+{% if mgmt_cluster_worker_count | default(0) | int > 0 %}
+{%   for _ in range(mgmt_cluster_worker_count | default(0) | int) %}
+  - role: worker
+{%     if mgmt_cluster_worker_extra_config is defined %}
+{%       for key, value in mgmt_cluster_worker_extra_config.items() %}
+    {{ key }}: {{ value }}
+{%       endfor %}
+{%     endif %}
+{%   endfor %}
+{% endif %}
+{% if mgmt_cluster_extra_config is defined %}
+{{ mgmt_cluster_extra_config }}
+{% endif %}

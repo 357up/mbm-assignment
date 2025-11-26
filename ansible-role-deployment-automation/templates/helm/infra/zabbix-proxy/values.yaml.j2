@@ -1,0 +1,25 @@
+{# Compose the Helm values document for the infra cluster Zabbix proxy release. #}
+{% set values = {} %}
+{% set proxy_image_tag = infra_cluster_zabbix_proxy_image_tag | default(None, true) %}
+{% if proxy_image_tag is not none %}
+{%   set values = values | combine({'zabbixImageTag': proxy_image_tag}) %}
+{% endif %}
+{% set values = values | combine({
+  'zabbixServer': {'enabled': False},
+  'zabbixWeb': {'enabled': False},
+  'zabbixWebService': {'enabled': False},
+  'postgresql': {'enabled': False},
+  'zabbixAgent': {'enabled': False},
+  'zabbixJavaGateway': {'enabled': False},
+  'zabbixProxy': {
+    'enabled': True,
+    'ZBX_PROXYMODE': infra_cluster_zabbix_proxy_mode | default(0),
+    'ZBX_HOSTNAME': infra_cluster_zabbix_proxy_hostname | default('zabbix-proxy'),
+    'ZBX_SERVER_HOST': infra_cluster_zabbix_proxy_server_host | default(__zabbix_proxy_server_host, true),
+    'ZBX_SERVER_PORT': infra_cluster_zabbix_proxy_server_port | default(10051)
+  }
+}, recursive=True) %}
+{% if infra_cluster_zabbix_proxy_values_overrides is defined %}
+{%   set values = values | combine(infra_cluster_zabbix_proxy_values_overrides, recursive=True) %}
+{% endif %}
+{{ values | to_nice_yaml(indent=2, sort_keys=False) }}

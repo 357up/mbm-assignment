@@ -1,0 +1,35 @@
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: "{{ infra_cluster_name | default('infra-cluster') }}"
+networking:
+  podSubnet: "{{ infra_cluster_pod_subnet | default('10.245.0.0/16') }}"
+  serviceSubnet: "{{ infra_cluster_service_subnet | default('10.97.0.0/12') }}"
+  apiServerAddress: "{{ infra_cluster_api_server_address | default('127.0.0.1') }}"
+  apiServerPort: {{ infra_cluster_api_server_port | default(26443) }}
+{% if infra_cluster_network_extra_config is defined %}
+{% for key, value in infra_cluster_network_extra_config.items() %}
+  {{ key }}: {{ value }}
+{% endfor %}
+{% endif %}
+nodes:
+{% for _ in range(infra_cluster_cp_count | default(1) | int) %}
+  - role: control-plane
+{%   if infra_cluster_control_plane_extra_config is defined %}
+{%     for key, value in infra_cluster_control_plane_extra_config.items() %}
+    {{ key }}: {{ value }}
+{%     endfor %}
+{%   endif %}
+{% endfor %}
+{% if infra_cluster_worker_count | default(0) | int > 0 %}
+{%   for _ in range(infra_cluster_worker_count | default(0) | int) %}
+  - role: worker
+{%     if infra_cluster_worker_extra_config is defined %}
+{%       for key, value in infra_cluster_worker_extra_config.items() %}
+    {{ key }}: {{ value }}
+{%       endfor %}
+{%     endif %}
+{%   endfor %}
+{% endif %}
+{% if infra_cluster_extra_config is defined %}
+{{ infra_cluster_extra_config }}
+{% endif %}
