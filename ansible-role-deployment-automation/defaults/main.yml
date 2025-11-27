@@ -163,3 +163,48 @@ infra_cluster_zabbix_proxy_registration_description: ~
 infra_cluster_zabbix_proxy_registration_operating_mode: ~
 infra_cluster_zabbix_proxy_registration_state: present
 infra_cluster_zabbix_proxy_registration_params: {}
+
+# SNMP workload defaults for simulated monitored devices.
+snmpd_user: snmpv3user
+snmpd_auth_pass: ChangeMeAuthPass
+snmpd_priv_pass: ChangeMePrivPass
+snmpd_syslocation: DemoLab
+snmpd_syscontact: ops@example.com
+snmpd_listen_port: 1161
+snmpd_listen_endpoint: "udp:{{ snmpd_listen_port }}"
+snmpd_template_path: /usr/local/share/snmp/snmpd.conf.template
+snmpd_config_path: /etc/snmp/snmpd.conf
+snmpd_image_repository: zabbix-snmpd
+snmpd_image_tag: kind
+snmpd_image_registry: docker.io
+snmpd_image_archive: zabbix-snmpd-kind.tar
+snmpd_kind_cluster_name: "{{ infra_cluster_name | default('infra-cluster') }}"
+snmpd_image_cleanup_archive: true
+snmpd_namespace: snmp-sim
+snmpd_app_name: snmpd
+snmpd_deployment_name: snmpd
+snmpd_service_name: snmpd
+snmpd_replicas: 3
+snmpd_service_type: ClusterIP
+snmpd_service_port: 1161
+snmpd_pod_annotations: {}
+snmpd_pod_labels: {}
+snmpd_service_annotations: {}
+snmpd_statefulset_name: "{{ snmpd_deployment_name }}"
+snmpd_headless_service_name: "{{ snmpd_service_name }}-headless"
+snmpd_pod_service_prefix: "{{ snmpd_service_name }}"
+snmpd_pod_service_annotations: {}
+snmpd_node_selector: {}
+snmpd_tolerations: []
+snmpd_affinity: {}
+snmpd_extra_env: []
+snmpd_resources: {}
+snmpd_secret_name: snmpd-credentials
+snmpd_secret_mount_path: /run/snmpd-credentials
+snmpd_secret_annotations: {}
+snmpd_secret_labels: {}
+snmpd_secret_keys:
+  user: user
+  auth_pass: auth-pass
+  priv_pass: priv-pass
+snmpd_force_rollout_restart: true

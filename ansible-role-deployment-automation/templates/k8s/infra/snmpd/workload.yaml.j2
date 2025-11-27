@@ -1,0 +1,179 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ snmpd_namespace }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ snmpd_headless_service_name }}
+  namespace: {{ snmpd_namespace }}
+  labels:
+    app: {{ snmpd_app_name }}
+{% for key, value in (snmpd_pod_labels | dictsort) %}
+    {{ key }}: {{ value | quote }}
+{% endfor %}
+spec:
+  clusterIP: None
+  selector:
+    app: {{ snmpd_app_name }}
+{% for key, value in (snmpd_pod_labels | dictsort) %}
+    {{ key }}: {{ value | quote }}
+{% endfor %}
+  ports:
+    - name: snmp
+      port: {{ snmpd_service_port | int }}
+      targetPort: {{ snmpd_listen_port | int }}
+      protocol: UDP
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ snmpd_statefulset_name }}
+  namespace: {{ snmpd_namespace }}
+  labels:
+    app: {{ snmpd_app_name }}
+{% for key, value in (snmpd_pod_labels | dictsort) %}
+    {{ key }}: {{ value | quote }}
+{% endfor %}
+spec:
+  serviceName: {{ snmpd_headless_service_name }}
+  replicas: {{ snmpd_replicas | int }}
+  selector:
+    matchLabels:
+      app: {{ snmpd_app_name }}
+{% for key, value in (snmpd_pod_labels | dictsort) %}
+      {{ key }}: {{ value | quote }}
+{% endfor %}
+  template:
+    metadata:
+      labels:
+        app: {{ snmpd_app_name }}
+{% for key, value in (snmpd_pod_labels | dictsort) %}
+        {{ key }}: {{ value | quote }}
+{% endfor %}
+{% if snmpd_pod_annotations %}
+      annotations:
+{% for key, value in (snmpd_pod_annotations | dictsort) %}
+        {{ key }}: {{ value | quote }}
+{% endfor %}
+{% endif %}
+    spec:
+{% if snmpd_node_selector %}
+      nodeSelector:
+{{ snmpd_node_selector | to_nice_yaml(indent=8) | indent(width=6, indentfirst=True) | trim }}
+{% endif %}
+{% if snmpd_affinity %}
+      affinity:
+{{ snmpd_affinity | to_nice_yaml(indent=8) | indent(width=6, indentfirst=True) | trim }}
+{% endif %}
+{% if snmpd_tolerations %}
+      tolerations:
+{{ snmpd_tolerations | to_nice_yaml(indent=8) | indent(width=6, indentfirst=True) | trim }}
+{% endif %}
+      containers:
+        - name: snmpd
+          image: "{{ snmpd_image_registry }}/{{ snmpd_image_repository }}:{{ snmpd_image_tag }}"
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: SNMPD_SYSLOCATION
+              value: "{{ snmpd_syslocation }}"
+            - name: SNMPD_SYSCONTACT
+              value: "{{ snmpd_syscontact }}"
+            - name: SNMPD_LISTEN
+              value: "{{ snmpd_listen_endpoint }}"
+            - name: SNMPD_TEMPLATE_PATH
+              value: "{{ snmpd_template_path }}"
+            - name: SNMPD_CONFIG_PATH
+              value: "{{ snmpd_config_path }}"
+            - name: SNMPD_SECRET_DIR
+              value: "{{ snmpd_secret_mount_path }}"
+            - name: SNMPD_SECRET_USER_KEY
+              value: "{{ snmpd_secret_keys.user }}"
+            - name: SNMPD_SECRET_AUTH_PASS_KEY
+              value: "{{ snmpd_secret_keys.auth_pass }}"
+            - name: SNMPD_SECRET_PRIV_PASS_KEY
+              value: "{{ snmpd_secret_keys.priv_pass }}"
+{% for item in snmpd_extra_env %}
+            - name: {{ item.name }}
+              value: "{{ item.value }}"
+{% endfor %}
+          ports:
+            - name: snmp
+              containerPort: {{ snmpd_listen_port | int }}
+              protocol: UDP
+          volumeMounts:
+            - name: snmpd-config
+              mountPath: /etc/snmp
+            - name: snmpd-credentials
+              mountPath: "{{ snmpd_secret_mount_path }}"
+              readOnly: true
+{% if snmpd_resources %}
+          resources:
+{{ snmpd_resources | to_nice_yaml(indent=12) | indent(width=10, indentfirst=True) | trim }}
+{% endif %}
+      volumes:
+        - name: snmpd-config
+          emptyDir: {}
+        - name: snmpd-credentials
+          secret:
+            secretName: {{ snmpd_secret_name }}
+            optional: false
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ snmpd_service_name }}
+  namespace: {{ snmpd_namespace }}
+  labels:
+    app: {{ snmpd_app_name }}
+{% for key, value in (snmpd_pod_labels | dictsort) %}
+    {{ key }}: {{ value | quote }}
+{% endfor %}
+{% if snmpd_service_annotations %}
+  annotations:
+{% for key, value in (snmpd_service_annotations | dictsort) %}
+    {{ key }}: {{ value | quote }}
+{% endfor %}
+{% endif %}
+spec:
+  type: {{ snmpd_service_type }}
+  selector:
+    app: {{ snmpd_app_name }}
+{% for key, value in (snmpd_pod_labels | dictsort) %}
+    {{ key }}: {{ value | quote }}
+{% endfor %}
+  ports:
+    - name: snmp
+      port: {{ snmpd_service_port | int }}
+      targetPort: {{ snmpd_listen_port | int }}
+      protocol: UDP
+{% for ordinal in range(snmpd_replicas | int) %}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ snmpd_pod_service_prefix }}-{{ ordinal }}
+  namespace: {{ snmpd_namespace }}
+  labels:
+    app: {{ snmpd_app_name }}
+    statefulset.kubernetes.io/pod-name: {{ snmpd_statefulset_name }}-{{ ordinal }}
+{% for key, value in (snmpd_pod_labels | dictsort) %}
+    {{ key }}: {{ value | quote }}
+{% endfor %}
+{% if snmpd_pod_service_annotations %}
+  annotations:
+{% for key, value in (snmpd_pod_service_annotations | dictsort) %}
+    {{ key }}: {{ value | quote }}
+{% endfor %}
+{% endif %}
+spec:
+  type: ClusterIP
+  selector:
+    statefulset.kubernetes.io/pod-name: {{ snmpd_statefulset_name }}-{{ ordinal }}
+  ports:
+    - name: snmp
+      port: {{ snmpd_service_port | int }}
+      targetPort: {{ snmpd_listen_port | int }}
+      protocol: UDP
+{% endfor %}

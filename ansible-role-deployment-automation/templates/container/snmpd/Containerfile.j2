@@ -1,0 +1,30 @@
+# SNMP daemon container built on Rocky Linux 9 with runtime templating and secret-backed credentials.
+FROM rockylinux:9
+
+RUN dnf -y update && \
+    dnf -y install net-snmp net-snmp-utils gettext && \
+    dnf clean all && \
+    rm -rf /var/cache/dnf
+
+ENV SNMPD_SECRET_DIR="{{ snmpd_secret_mount_path | default('/run/snmpd-credentials') }}" \
+    SNMPD_TEMPLATE_PATH="{{ snmpd_template_path | default('/usr/local/share/snmp/snmpd.conf.template') }}" \
+    SNMPD_CONFIG_PATH="{{ snmpd_config_path | default('/etc/snmp/snmpd.conf') }}" \
+    SNMPD_LISTEN="{{ snmpd_listen_endpoint | default('udp:1161') }}" \
+    SNMPD_SYSLOCATION="{{ snmpd_syslocation | default('DemoLab') }}" \
+    SNMPD_SYSCONTACT="{{ snmpd_syscontact | default('ops@example.com') }}" \
+    SNMPD_SECRET_USER_KEY="{{ snmpd_secret_keys.user | default('user') }}" \
+    SNMPD_SECRET_AUTH_PASS_KEY="{{ snmpd_secret_keys.auth_pass | default('auth-pass') }}" \
+    SNMPD_SECRET_PRIV_PASS_KEY="{{ snmpd_secret_keys.priv_pass | default('priv-pass') }}"
+
+RUN mkdir -p /usr/local/share/snmp /var/lib/net-snmp && \
+    chown nobody:nobody /var/lib/net-snmp
+
+COPY snmpd.conf.template /usr/local/share/snmp/snmpd.conf.template
+COPY container-entrypoint.sh /usr/local/bin/container-entrypoint.sh
+
+RUN chmod 0755 /usr/local/bin/container-entrypoint.sh
+
+EXPOSE {{ snmpd_listen_port | default(1161) }}/udp
+
+ENTRYPOINT ["/usr/local/bin/container-entrypoint.sh"]
+CMD ["/usr/sbin/snmpd", "-f", "-Lo"]

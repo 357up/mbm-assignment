@@ -1,0 +1,64 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+TEMPLATE_PATH="${SNMPD_TEMPLATE_PATH:-/usr/local/share/snmp/snmpd.conf.template}"
+CONFIG_PATH="${SNMPD_CONFIG_PATH:-/etc/snmp/snmpd.conf}"
+SECRET_DIR="${SNMPD_SECRET_DIR:-/run/snmpd-credentials}"
+USER_KEY="${SNMPD_SECRET_USER_KEY:-user}"
+AUTH_KEY="${SNMPD_SECRET_AUTH_PASS_KEY:-auth-pass}"
+PRIV_KEY="${SNMPD_SECRET_PRIV_PASS_KEY:-priv-pass}"
+
+read_secret() {
+  local key="$1"
+  local secret_path="${SECRET_DIR}/${key}"
+  if [[ ! -r "${secret_path}" ]]; then
+    return 1
+  fi
+  cat "${secret_path}"
+}
+
+if [[ ! -r "${TEMPLATE_PATH}" ]]; then
+  echo "[entrypoint] Template not found at ${TEMPLATE_PATH}" >&2
+  exit 1
+fi
+
+mkdir -p "$(dirname "${CONFIG_PATH}")"
+
+if [[ -z "${SNMPD_USER:-}" ]]; then
+  if ! SNMPD_USER="$(read_secret "${USER_KEY}")"; then
+    echo "[entrypoint] Missing SNMP user secret at ${SECRET_DIR}/${USER_KEY}" >&2
+    exit 1
+  fi
+fi
+
+if [[ -z "${SNMPD_AUTH_PASS:-}" ]]; then
+  if ! SNMPD_AUTH_PASS="$(read_secret "${AUTH_KEY}")"; then
+    echo "[entrypoint] Missing SNMP auth pass secret at ${SECRET_DIR}/${AUTH_KEY}" >&2
+    exit 1
+  fi
+fi
+
+if [[ -z "${SNMPD_PRIV_PASS:-}" ]]; then
+  if ! SNMPD_PRIV_PASS="$(read_secret "${PRIV_KEY}")"; then
+    echo "[entrypoint] Missing SNMP priv pass secret at ${SECRET_DIR}/${PRIV_KEY}" >&2
+    exit 1
+  fi
+fi
+
+for required_var in SNMPD_SYSLOCATION SNMPD_SYSCONTACT SNMPD_LISTEN; do
+  if [[ -z "${!required_var:-}" ]]; then
+    echo "[entrypoint] Environment variable ${required_var} must be set" >&2
+    exit 1
+  fi
+done
+
+export SNMPD_USER SNMPD_AUTH_PASS SNMPD_PRIV_PASS
+
+tmp_config="${CONFIG_PATH}.tmp"
+envsubst '${SNMPD_USER} ${SNMPD_AUTH_PASS} ${SNMPD_PRIV_PASS} ${SNMPD_SYSLOCATION} ${SNMPD_SYSCONTACT} ${SNMPD_LISTEN}' \
+  < "${TEMPLATE_PATH}" > "${tmp_config}"
+
+mv "${tmp_config}" "${CONFIG_PATH}"
+chmod 0600 "${CONFIG_PATH}"
+
+exec "$@"

@@ -1,0 +1,9 @@
+# SNMPv3 authPriv configuration rendered at runtime via envsubst.
+agentAddress ${SNMPD_LISTEN}
+
+createUser ${SNMPD_USER} SHA "${SNMPD_AUTH_PASS}" AES "${SNMPD_PRIV_PASS}"
+rouser ${SNMPD_USER} priv
+
+view all included .1
+sysLocation ${SNMPD_SYSLOCATION}
+sysContact ${SNMPD_SYSCONTACT}

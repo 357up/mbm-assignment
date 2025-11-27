@@ -1,0 +1,60 @@
+# Deploy SNMP workload into infra cluster
+---
+- name: Render SNMP credential secret manifest
+  ansible.builtin.template:
+    src: templates/k8s/infra/snmpd/secret.yaml.j2
+    dest: "{{ __temp_dir.path }}/snmpd-secret.yaml"
+    mode: "0644"
+  register: __snmpd_secret_manifest
+
+- name: Apply SNMP credential secret
+  ansible.builtin.command:
+    cmd: >-
+      kubectl --kubeconfig {{ __temp_dir.path }}/kubeconfig-infra
+      apply -f {{ __snmpd_secret_manifest.dest }}
+  register: __snmpd_secret_apply
+  changed_when: >-
+    (__snmpd_secret_apply.stdout_lines | default([])
+     | select('match', ' (created|configured)$')
+     | list | length) > 0
+  failed_when: __snmpd_secret_apply.rc != 0
+
+- name: Render SNMP workload manifest
+  ansible.builtin.template:
+    src: templates/k8s/infra/snmpd/workload.yaml.j2
+    dest: "{{ __temp_dir.path }}/snmpd-workload.yaml"
+    mode: "0644"
+  register: __snmpd_manifest
+
+- name: Apply SNMP workload manifest
+  ansible.builtin.command:
+    cmd: >-
+      kubectl --kubeconfig {{ __temp_dir.path }}/kubeconfig-infra
+      apply -f {{ __snmpd_manifest.dest }}
+  register: __snmpd_manifest_apply
+  changed_when: >-
+    (__snmpd_manifest_apply.stdout_lines | default([])
+     | select('match', ' (created|configured)$')
+     | list | length) > 0
+  failed_when: __snmpd_manifest_apply.rc != 0
+
+- name: Restart SNMPd statefulset to pick up image updates
+  ansible.builtin.command:
+    cmd: >-
+      kubectl --kubeconfig {{ __temp_dir.path }}/kubeconfig-infra
+      rollout restart statefulset/{{ snmpd_statefulset_name }}
+      --namespace {{ snmpd_namespace }}
+  register: __snmpd_rollout_restart
+  when: snmpd_force_rollout_restart | bool
+  changed_when: (__snmpd_rollout_restart.stdout | default('')) is search('restarted')
+
+- name: Wait for SNMPd deployment rollout
+  ansible.builtin.command:
+    cmd: >-
+      kubectl --kubeconfig {{ __temp_dir.path }}/kubeconfig-infra
+      rollout status statefulset/{{ snmpd_statefulset_name }}
+      --namespace {{ snmpd_namespace }}
+      --timeout=120s
+  register: __snmpd_rollout
+  changed_when: false
+  failed_when: __snmpd_rollout.rc != 0

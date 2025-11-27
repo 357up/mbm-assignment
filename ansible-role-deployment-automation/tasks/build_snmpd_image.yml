@@ -1,0 +1,83 @@
+# Build and import SNMP daemon container image into kind
+---
+- name: Ensure SNMPd container build context exists
+  ansible.builtin.file:
+    path: "{{ __temp_dir.path }}/snmpd-container"
+    state: directory
+    mode: "0755"
+
+- name: Render SNMPd container build files
+  ansible.builtin.template:
+    src: "{{ item.src }}"
+    dest: "{{ item.dest }}"
+    mode: "{{ item.mode }}"
+  loop:
+    - src: container/snmpd/Containerfile.j2
+      dest: "{{ __temp_dir.path }}/snmpd-container/Containerfile"
+      mode: "0644"
+    - src: container/snmpd/snmpd.conf.j2
+      dest: "{{ __temp_dir.path }}/snmpd-container/snmpd.conf.template"
+      mode: "0644"
+    - src: container/snmpd/container-entrypoint.sh.j2
+      dest: "{{ __temp_dir.path }}/snmpd-container/container-entrypoint.sh"
+      mode: "0755"
+
+- name: Record SNMPd image references
+  ansible.builtin.set_fact:
+    __snmpd_image_local_ref: "{{ snmpd_image_repository }}:{{ snmpd_image_tag }}"
+    __snmpd_image_registry_ref: "{{ snmpd_image_registry }}/{{ snmpd_image_repository }}:{{ snmpd_image_tag }}"
+    __snmpd_image_archive_path: "{{ __temp_dir.path }}/{{ snmpd_image_archive }}"
+
+- name: Build SNMPd container image with Podman
+  containers.podman.podman_image:
+    name: "{{ snmpd_image_repository }}"
+    tag: "{{ snmpd_image_tag }}"
+    path: "{{ __temp_dir.path }}/snmpd-container"
+    build:
+      file: Containerfile
+      format: oci
+      cache: false
+    force: true
+  register: __snmpd_image_build
+
+- name: Tag SNMPd image for Kind import
+  ansible.builtin.command:
+    argv:
+      - podman
+      - tag
+      - "{{ __snmpd_image_local_ref }}"
+      - "{{ __snmpd_image_registry_ref }}"
+  register: __snmpd_image_tag_result
+  changed_when: __snmpd_image_tag_result.rc == 0
+  failed_when: __snmpd_image_tag_result.rc != 0
+
+- name: Save SNMPd image to archive
+  ansible.builtin.command:
+    argv:
+      - podman
+      - save
+      - "{{ __snmpd_image_registry_ref }}"
+      - -o
+      - "{{ __snmpd_image_archive_path }}"
+  register: __snmpd_image_save
+  changed_when: __snmpd_image_save.rc == 0
+  failed_when: __snmpd_image_save.rc != 0
+
+- name: Load SNMPd image archive into kind cluster
+  ansible.builtin.command:
+    argv:
+      - kind
+      - load
+      - image-archive
+      - "{{ __snmpd_image_archive_path }}"
+      - --name
+      - "{{ snmpd_kind_cluster_name }}"
+  register: __snmpd_kind_load
+  changed_when: __snmpd_kind_load.rc == 0
+  failed_when: __snmpd_kind_load.rc != 0
+
+- name: Remove SNMPd image archive
+  ansible.builtin.file:
+    path: "{{ __snmpd_image_archive_path }}"
+    state: absent
+  when: snmpd_image_cleanup_archive | bool
