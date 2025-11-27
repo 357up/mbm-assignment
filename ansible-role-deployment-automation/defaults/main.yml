@@ -186,7 +186,7 @@ snmpd_deployment_name: snmpd
 snmpd_service_name: snmpd
 snmpd_replicas: 3
 snmpd_service_type: ClusterIP
-snmpd_service_port: 1161
+snmpd_service_port: 161
 snmpd_pod_annotations: {}
 snmpd_pod_labels: {}
 snmpd_service_annotations: {}
@@ -208,3 +208,22 @@ snmpd_secret_keys:
   auth_pass: auth-pass
   priv_pass: priv-pass
 snmpd_force_rollout_restart: true
+
+# Zabbix SNMP host registration defaults.
+infra_cluster_zabbix_snmp_host_registration_enabled: true
+infra_cluster_zabbix_snmp_host_groups:
+  - Simulated SNMP Devices
+infra_cluster_zabbix_snmp_templates:
+  - Linux by SNMP
+infra_cluster_zabbix_snmp_tags: []
+infra_cluster_zabbix_snmp_macros: []
+infra_cluster_zabbix_snmp_security_name: "{{ snmpd_user }}"
+infra_cluster_zabbix_snmp_security_level: 2
+infra_cluster_zabbix_snmp_auth_protocol: 1
+infra_cluster_zabbix_snmp_auth_passphrase: "{{ snmpd_auth_pass }}"
+infra_cluster_zabbix_snmp_priv_protocol: 1
+infra_cluster_zabbix_snmp_priv_passphrase: "{{ snmpd_priv_pass }}"
+infra_cluster_zabbix_snmp_version: 3
+infra_cluster_zabbix_snmp_bulk: 1
+infra_cluster_zabbix_snmp_monitored_by: proxy
+infra_cluster_zabbix_snmp_host_status: enabled

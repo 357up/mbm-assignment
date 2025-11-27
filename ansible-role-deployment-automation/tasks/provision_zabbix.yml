@@ -210,6 +210,14 @@
          | regex_replace('s$', '')
          | int }}
 
+- name: Determine Zabbix proxy registration name
+  ansible.builtin.set_fact:
+    __zabbix_proxy_registration_name: >-
+      {{
+        infra_cluster_zabbix_proxy_registration_name
+        | default(infra_cluster_zabbix_proxy_hostname, true)
+      }}
+
 - name: Deploy Zabbix proxy in infra cluster via Helm
   kubernetes.core.helm:
     name: "{{ infra_cluster_zabbix_proxy_release_name | default('zabbix-proxy') }}"
@@ -385,10 +393,7 @@
     __zabbix_proxy_registration_payload: >-
       {{
         {
-          'proxy_name': (
-            infra_cluster_zabbix_proxy_registration_name
-            | default(infra_cluster_zabbix_proxy_hostname, true)
-          ),
+          'proxy_name': __zabbix_proxy_registration_name,
           'operating_mode': (
             infra_cluster_zabbix_proxy_registration_operating_mode
             | default(
@@ -426,3 +431,103 @@
     ansible_user: "{{ __zabbix_api_login_user }}"
     ansible_httpapi_pass: "{{ __zabbix_api_login_password }}"
   community.zabbix.zabbix_proxy: "{{ __zabbix_proxy_registration_payload }}"
+
+- name: Ensure proxy name available for SNMP host onboarding
+  when:
+    - infra_cluster_zabbix_snmp_host_registration_enabled | bool
+    - (__zabbix_proxy_registration_name | default('') | string | trim) | length == 0
+  ansible.builtin.fail:
+    msg: Unable to determine a proxy name to attach SNMP workloads to.
+
+- name: Initialise SNMP host registration dataset
+  when: infra_cluster_zabbix_snmp_host_registration_enabled | bool
+  ansible.builtin.set_fact:
+    __snmpd_host_registration_objects: []
+
+- name: Build SNMP host registration dataset
+  when: infra_cluster_zabbix_snmp_host_registration_enabled | bool
+  ansible.builtin.set_fact:
+    __snmpd_host_registration_objects: >-
+      {{
+        (__snmpd_host_registration_objects | default([]))
+        + [
+            {
+              'service_name': __snmpd_service_name,
+              'service_dns': __snmpd_service_name ~ '.' ~ snmpd_namespace ~ '.svc.cluster.local.',
+              'pod_name': __snmpd_pod_name,
+              'namespace': snmpd_namespace
+            }
+          ]
+      }}
+  loop: "{{ range(0, snmpd_replicas | int) | list }}"
+  loop_control:
+    label: "{{ __snmpd_service_name }}"
+  vars:
+    __snmpd_service_name: "{{ snmpd_pod_service_prefix }}-{{ item }}"
+    __snmpd_pod_name: "{{ snmpd_statefulset_name }}-{{ item }}"
+
+- name: Ensure Zabbix host groups for SNMP workloads exist
+  when:
+    - infra_cluster_zabbix_snmp_host_registration_enabled | bool
+    - (__snmpd_host_registration_objects | default([])) | length > 0
+    - (infra_cluster_zabbix_snmp_host_groups | default([])) | length > 0
+  vars:
+    ansible_network_os: community.zabbix.zabbix
+    ansible_connection: httpapi
+    ansible_host: "{{ __zabbix_api_host }}"
+    ansible_httpapi_port: "{{ __zabbix_api_port | int }}"
+    ansible_httpapi_use_ssl: "{{ __zabbix_api_use_ssl | bool }}"
+    ansible_httpapi_validate_certs: "{{ __zabbix_api_validate_certs | bool }}"
+    ansible_zabbix_url_path: "{{ __zabbix_api_url_path }}"
+    ansible_user: "{{ __zabbix_api_login_user }}"
+    ansible_httpapi_pass: "{{ __zabbix_api_login_password }}"
+  community.zabbix.zabbix_group:
+    host_groups: "{{ infra_cluster_zabbix_snmp_host_groups }}"
+    state: present
+
+- name: Register SNMP workloads with Zabbix via proxy
+  when:
+    - infra_cluster_zabbix_snmp_host_registration_enabled | bool
+    - (__snmpd_host_registration_objects | default([])) | length > 0
+    - (infra_cluster_zabbix_snmp_host_groups | default([])) | length > 0
+  vars:
+    ansible_network_os: community.zabbix.zabbix
+    ansible_connection: httpapi
+    ansible_host: "{{ __zabbix_api_host }}"
+    ansible_httpapi_port: "{{ __zabbix_api_port | int }}"
+    ansible_httpapi_use_ssl: "{{ __zabbix_api_use_ssl | bool }}"
+    ansible_httpapi_validate_certs: "{{ __zabbix_api_validate_certs | bool }}"
+    ansible_zabbix_url_path: "{{ __zabbix_api_url_path }}"
+    ansible_user: "{{ __zabbix_api_login_user }}"
+    ansible_httpapi_pass: "{{ __zabbix_api_login_password }}"
+  community.zabbix.zabbix_host:
+    host_name: "{{ item.service_name }}"
+    visible_name: "{{ item.pod_name }}"
+    description: "SNMP simulator pod {{ item.pod_name }} in namespace {{ item.namespace }}"
+    host_groups: "{{ infra_cluster_zabbix_snmp_host_groups }}"
+    link_templates: "{{ infra_cluster_zabbix_snmp_templates if (infra_cluster_zabbix_snmp_templates | default([])) | length > 0 else omit }}"
+    monitored_by: "{{ infra_cluster_zabbix_snmp_monitored_by }}"
+    proxy: "{{ __zabbix_proxy_registration_name }}"
+    status: "{{ infra_cluster_zabbix_snmp_host_status }}"
+    state: present
+    interfaces:
+      - type: snmp
+        main: 1
+        useip: 0
+        ip: ""
+        dns: "{{ item.service_dns }}"
+        port: "{{ snmpd_service_port | string }}"
+        details:
+          version: "{{ infra_cluster_zabbix_snmp_version | int }}"
+          securityname: "{{ infra_cluster_zabbix_snmp_security_name }}"
+          securitylevel: "{{ infra_cluster_zabbix_snmp_security_level | int }}"
+          authprotocol: "{{ infra_cluster_zabbix_snmp_auth_protocol | int }}"
+          authpassphrase: "{{ infra_cluster_zabbix_snmp_auth_passphrase }}"
+          privprotocol: "{{ infra_cluster_zabbix_snmp_priv_protocol | int }}"
+          privpassphrase: "{{ infra_cluster_zabbix_snmp_priv_passphrase }}"
+          bulk: "{{ infra_cluster_zabbix_snmp_bulk | int }}"
+    tags: "{{ (infra_cluster_zabbix_snmp_tags | default([])) + [{'tag': 'namespace', 'value': item.namespace}, {'tag': 'service', 'value': item.service_name}] }}"
+    macros: "{{ infra_cluster_zabbix_snmp_macros if (infra_cluster_zabbix_snmp_macros | default([])) | length > 0 else omit }}"
+  loop: "{{ __snmpd_host_registration_objects | default([]) }}"
+  loop_control:
+    label: "{{ item.service_name }}"
