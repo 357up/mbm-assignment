@@ -1,0 +1,232 @@
+# Kubernetes provisioning tasks
+---
+- name: Render "{{ item.src }}" to "{{ item.dest }}"
+  ansible.builtin.template:
+    src: "{{ item.src }}"
+    dest: "{{ item.dest }}"
+    mode: "0644"
+  changed_when: false
+  with_items:
+    - src: templates/kind/infra/cluster-conf.yaml.j2
+      dest: "{{ __temp_dir.path }}/kind-infra-cluster-conf.yaml"
+    - src: templates/kind/mgmt/cluster-conf.yaml.j2
+      dest: "{{ __temp_dir.path }}/kind-mgmt-cluster-conf.yaml"
+
+- name: Print kind cluster configs
+  when: ansible_verbosity | int >= 2
+  ansible.builtin.debug:
+    msg: "{{ lookup('ansible.builtin.file', item) }}"
+  with_items:
+    - "{{ __temp_dir.path }}/kind-infra-cluster-conf.yaml"
+    - "{{ __temp_dir.path }}/kind-mgmt-cluster-conf.yaml"
+
+- name: Create kind infra cluster
+  ansible.builtin.command:
+    cmd: >
+      kind create cluster
+      --config {{ __temp_dir.path }}/kind-infra-cluster-conf.yaml
+  register: __infra_cluster_create
+  changed_when: __infra_cluster_create.rc == 0
+  failed_when: >
+    __infra_cluster_create.rc != 0 and
+    ("ERROR: failed to create cluster: node(s) already exist for a cluster with the name \"%s\"" | format(infra_cluster_name | default('infra-cluster'))) not in (__infra_cluster_create.stderr | default(''))
+
+- name: Get kubeconfig for infra cluster
+  ansible.builtin.command:
+    cmd: >
+      kind get kubeconfig --name {{ infra_cluster_name | default('infra-cluster') }}
+  register: __infra_kubeconfig_cmd
+  changed_when: false
+  failed_when: __infra_kubeconfig_cmd.rc != 0
+
+- name: Save kubeconfig for infra cluster
+  ansible.builtin.copy:
+    content: "{{ __infra_kubeconfig_cmd.stdout }}"
+    dest: "{{ __temp_dir.path }}/kubeconfig-infra"
+  changed_when: false
+
+- name: Create kind mgmt cluster
+  ansible.builtin.command:
+    cmd: >
+      kind create cluster
+      --config {{ __temp_dir.path }}/kind-mgmt-cluster-conf.yaml
+  register: __mgmt_cluster_create
+  changed_when: __mgmt_cluster_create.rc == 0
+  failed_when: >
+    __mgmt_cluster_create.rc != 0 and
+    ("ERROR: failed to create cluster: node(s) already exist for a cluster with the name \"%s\"" | format(mgmt_cluster_name | default('mgmt-cluster'))) not in (__mgmt_cluster_create.stderr | default(''))
+
+- name: Get kubeconfig for mgmt cluster
+  ansible.builtin.command:
+    cmd: >
+      kind get kubeconfig --name {{ mgmt_cluster_name | default('mgmt-cluster') }}
+  register: __mgmt_kubeconfig_cmd
+  changed_when: false
+  failed_when: __mgmt_kubeconfig_cmd.rc != 0
+
+- name: Save kubeconfig for mgmt cluster
+  ansible.builtin.copy:
+    content: "{{ __mgmt_kubeconfig_cmd.stdout }}"
+    dest: "{{ __temp_dir.path }}/kubeconfig-mgmt"
+  changed_when: false
+
+- name: Ensure metallb Helm repository is configured
+  kubernetes.core.helm_repository:
+    name: metallb
+    repo_url: https://metallb.github.io/metallb
+    state: present
+  notify:
+    - update metallb helm repository cache
+
+- name: Render metallb Helm values overrides when provided
+  ansible.builtin.template:
+    src: templates/helm/metallb/values.yaml.j2
+    dest: "{{ __temp_dir.path }}/metallb-values.yaml"
+    mode: "0644"
+  changed_when: false
+  when: metallb_values is defined
+  register: __metallb_values_template
+
+- name: Record metallb Helm values file path
+  ansible.builtin.set_fact:
+    __metallb_values_file: "{{ __metallb_values_template.dest }}"
+  when:
+    - metallb_values is defined
+    - not __metallb_values_template.failed | default(false)
+
+- name: Compute MetalLB Helm timeout seconds
+  ansible.builtin.set_fact:
+    __metallb_helm_timeout_seconds: >-
+      {{ ((mgmt_cluster_metallb_helm_timeout | default('300s')) ~ '')
+         | regex_replace('s$', '')
+         | int }}
+
+- name: Flush handlers before deploying MetalLB
+  ansible.builtin.meta: flush_handlers
+
+- name: Deploy metallb in mgmt cluster via Helm
+  kubernetes.core.helm:
+    name: "{{ mgmt_cluster_metallb_release_name | default('metallb') }}"
+    chart_ref: metallb/metallb
+    kubeconfig: "{{ __temp_dir.path }}/kubeconfig-mgmt"
+    release_namespace: "{{ mgmt_cluster_metallb_namespace | default('metallb-system') }}"
+    create_namespace: true
+    wait: true
+    timeout: "{{ (__metallb_helm_timeout_seconds | default(300)) | int }}s"
+    values_files: "{{ [__metallb_values_file] if __metallb_values_file is defined else omit }}"
+    state: present
+    binary_path: "{{ helm_binary_path }}" # Use files/helm-wrapper.py for helm binary if you are running Helm 4. There is some sort of bug in kubernetes.core.helm module that makes it not work with Helm 4 directly.
+
+- name: Inspect Podman network for mgmt cluster control plane
+  ansible.builtin.command:
+    cmd: >
+      podman inspect {{ mgmt_cluster_name | default('mgmt-cluster') }}-control-plane
+  register: __mgmt_cp_inspect
+  changed_when: false
+  when: (mgmt_cluster_metallb_ipaddresspools | default([])) | length == 0
+
+- name: Extract podman network assignments for mgmt control plane
+  ansible.builtin.set_fact:
+    __mgmt_cp_networks: >-
+      {{
+        (__mgmt_cp_inspect.stdout | from_json)[0]['NetworkSettings']['Networks']
+        | default({})
+      }}
+  when: (mgmt_cluster_metallb_ipaddresspools | default([])) | length == 0
+
+- name: Ensure podman network entry exists for kind
+  ansible.builtin.fail:
+    msg: >-
+      Unable to locate podman network "{{ podman_kind_network_name }}" in control plane container inspect data.
+  when:
+    - (mgmt_cluster_metallb_ipaddresspools | default([])) | length == 0
+    - podman_kind_network_name not in (__mgmt_cp_networks | default({}))
+
+- name: Record podman network details for MetalLB pool calculation
+  ansible.builtin.set_fact:
+    __mgmt_cp_kind_network: "{{ __mgmt_cp_networks[podman_kind_network_name] }}"
+  when: (mgmt_cluster_metallb_ipaddresspools | default([])) | length == 0
+
+- name: Calculate MetalLB IP pool bounds from podman network
+  ansible.builtin.command: "{{ ansible_python_interpreter | default('python3') }} -"
+  args:
+    stdin: |
+      import json
+      import ipaddress
+
+      cfg = json.loads('''{{ __mgmt_cp_kind_network | to_json }}''')
+      pool_size = int({{ mgmt_cluster_metallb_ip_pool_size | default(50) }})
+      tail_reserve = int({{ mgmt_cluster_metallb_ip_pool_tail_reserve | default(2) }})
+
+      address = cfg.get('IPAddress')
+      prefix = cfg.get('IPPrefixLen')
+      if address is None or prefix is None:
+        raise SystemExit('Missing IPAddress or IPPrefixLen in podman network configuration')
+
+      network = ipaddress.ip_network(f"{address}/{prefix}", strict=False)
+      hosts = list(network.hosts())
+
+      if not hosts:
+        start = str(network.network_address)
+        end = str(network.broadcast_address)
+      else:
+        usable_hosts = hosts
+        if tail_reserve > 0 and tail_reserve < len(usable_hosts):
+          usable_hosts = usable_hosts[: len(usable_hosts) - tail_reserve]
+        pool_size = max(1, min(pool_size, len(usable_hosts))) if usable_hosts else 0
+        if pool_size == 0:
+          start = str(network.network_address)
+          end = str(network.broadcast_address)
+        else:
+          start = str(usable_hosts[-pool_size])
+          end = str(usable_hosts[-1])
+
+      result = {'start': start, 'end': end, 'cidr': str(network)}
+      print(json.dumps(result))
+  register: __mgmt_metallb_pool_bounds
+  changed_when: false
+  when: (mgmt_cluster_metallb_ipaddresspools | default([])) | length == 0
+
+- name: Parse MetalLB IP pool bounds output
+  ansible.builtin.set_fact:
+    __mgmt_metallb_pool_bounds_data: "{{ __mgmt_metallb_pool_bounds.stdout | from_json }}"
+  when: (mgmt_cluster_metallb_ipaddresspools | default([])) | length == 0
+
+- name: Record MetalLB IP pool definition
+  ansible.builtin.set_fact:
+    mgmt_cluster_metallb_ipaddresspools:
+      - name: "{{ mgmt_cluster_metallb_ip_pool_name }}"
+        addresses:
+          - >-
+            {{
+              __mgmt_metallb_pool_bounds_data.start
+              ~ '-' ~
+              __mgmt_metallb_pool_bounds_data.end
+            }}
+  when: (mgmt_cluster_metallb_ipaddresspools | default([])) | length == 0
+
+- name: Print MetalLB IP pool derived from podman network
+  when:
+    - __mgmt_metallb_pool_bounds is defined
+    - ansible_verbosity | int >= 2
+  ansible.builtin.debug:
+    msg: >-
+      Using MetalLB IP range {{ __mgmt_metallb_pool_bounds_data.start }}-{{ __mgmt_metallb_pool_bounds_data.end }}
+      derived from podman network {{ podman_kind_network_name }} ({{ __mgmt_metallb_pool_bounds_data.cidr }})
+
+- name: Prepare metallb configmap for mgmt cluster
+  ansible.builtin.template:
+    src: templates/k8s/mgmt/metallb/metallb-config.yaml.j2
+    dest: "{{ __temp_dir.path }}/metallb-config.yaml"
+    mode: "0644"
+  changed_when: false
+
+- name: Apply metallb configmap to mgmt cluster
+  ansible.builtin.command:
+    cmd: >
+      kubectl --kubeconfig {{ __temp_dir.path }}/kubeconfig-mgmt
+      apply -f {{ __temp_dir.path }}/metallb-config.yaml
+  register: __metallb_config_apply
+  changed_when: >
+    (__metallb_config_apply.stdout_lines | default([]) | select('match', ' (created|configured|deleted)$')
+    | list | length) > 0

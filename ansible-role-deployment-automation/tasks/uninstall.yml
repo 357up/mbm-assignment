@@ -1,0 +1,49 @@
+# tasks for Kubernetes and Zabbix teardown workflow
+---
+- name: Build managed kind cluster name list
+  ansible.builtin.set_fact:
+    __managed_kind_clusters: >-
+      {{
+        [
+          infra_cluster_name | default('infra-cluster'),
+          mgmt_cluster_name | default('mgmt-cluster')
+        ]
+        | map('trim')
+        | reject('equalto', '')
+        | unique
+        | list
+      }}
+
+- name: Delete managed kind clusters
+  ansible.builtin.command:
+    cmd: >
+      kind delete cluster
+      --name {{ item }}
+  loop: "{{ __managed_kind_clusters }}"
+  loop_control:
+    label: "{{ item }}"
+  register: __delete_kind_cluster
+  changed_when: >-
+    ((__delete_kind_cluster.stdout | default('')) ~ (__delete_kind_cluster.stderr | default('')))
+    is search('Deleted cluster')
+  failed_when: >-
+    __delete_kind_cluster.rc != 0 and
+    ((
+      (__delete_kind_cluster.stdout | default('')) ~
+      (__delete_kind_cluster.stderr | default(''))
+    ))
+    is not search('(?i)(not exist|no kind clusters found)')
+
+- name: Ensure Zabbix web reverse proxy container is absent
+  containers.podman.podman_container:
+    name: "{{ zabbix_web_reverse_proxy_container_name }}"
+    state: absent
+
+- name: Remove Zabbix web reverse proxy config file
+  ansible.builtin.file:
+    path: >-
+      {{
+        (zabbix_web_reverse_proxy_config_dir | regex_replace('/+$', ''))
+        ~ '/zabbix-web-proxy.conf'
+      }}
+    state: absent

@@ -1,7 +1,12 @@
 ---
 # defaults file for ansible-role-deployment-automation
 
+# Desired deployment state for the role. Supported values: present, absent.
+state: present
+
 # MetalLB configuration for the mgmt cluster.
+helm_binary_path:   # "{{ role_path }}/files/helm-wrapper.py"  # Fix for Helm 4 compatibility with kubernetes.core.helm module.
+
 mgmt_cluster_metallb_namespace: metallb-system
 mgmt_cluster_metallb_ipaddresspools: []
 mgmt_cluster_metallb_ip_pool_name: mgmt-cluster-pool

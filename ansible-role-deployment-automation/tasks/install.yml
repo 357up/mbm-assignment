@@ -1,0 +1,23 @@
+# tasks for provisioning Kubernetes and Zabbix components
+---
+- name: Run deployment workflow tasks
+  block:
+    - name: Create a temporary directory for kind cluster configs
+      ansible.builtin.tempfile:
+        state: directory
+        prefix: ansible-role-deployment-automation_
+      register: __temp_dir
+      changed_when: false
+
+    - name: Include Kubernetes provisioning tasks
+      ansible.builtin.include_tasks: provision_k8s.yml
+
+    - name: Include Zabbix provisioning tasks
+      ansible.builtin.include_tasks: provision_zabbix.yml
+  always:
+    - name: Remove temporary kind cluster configs directory
+      ansible.builtin.file:
+        path: "{{ __temp_dir.path }}"
+        state: absent
+      when: __temp_dir is defined
+      changed_when: false
