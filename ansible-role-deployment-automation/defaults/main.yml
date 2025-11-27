@@ -207,7 +207,9 @@ snmpd_secret_keys:
   user: user
   auth_pass: auth-pass
   priv_pass: priv-pass
-snmpd_force_rollout_restart: true
+snmpd_force_rollout_restart: false
+snmpd_image_digest_annotation_key: deployment-automation/image-digest
+snmpd_force_rebuild_image: false
 
 # Zabbix SNMP host registration defaults.
 infra_cluster_zabbix_snmp_host_registration_enabled: true

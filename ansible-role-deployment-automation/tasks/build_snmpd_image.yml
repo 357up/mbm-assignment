@@ -5,6 +5,7 @@
     path: "{{ __temp_dir.path }}/snmpd-container"
     state: directory
     mode: "0755"
+  changed_when: false
 
 - name: Render SNMPd container build files
   ansible.builtin.template:
@@ -21,6 +22,7 @@
     - src: container/snmpd/container-entrypoint.sh.j2
       dest: "{{ __temp_dir.path }}/snmpd-container/container-entrypoint.sh"
       mode: "0755"
+  changed_when: false
 
 - name: Record SNMPd image references
   ansible.builtin.set_fact:
@@ -37,8 +39,56 @@
       file: Containerfile
       format: oci
       cache: false
-    force: true
+    force: "{{ snmpd_force_rebuild_image | bool }}"
   register: __snmpd_image_build
+
+- name: Inspect SNMPd image digest
+  ansible.builtin.command:
+    argv:
+      - podman
+      - image
+      - inspect
+      - "{{ __snmpd_image_local_ref }}"
+      - --format
+      - "{{ '{{.Id}}' }}"
+  register: __snmpd_image_inspect
+  changed_when: false
+  failed_when: __snmpd_image_inspect.rc != 0
+
+- name: Record SNMPd image digest fact
+  ansible.builtin.set_fact:
+    snmpd_image_current_digest: "{{ __snmpd_image_inspect.stdout | default('') | trim }}"
+
+- name: Discover deployed SNMPd image digest annotation (if present)
+  ansible.builtin.command:
+    argv:
+      - kubectl
+      - --kubeconfig
+      - "{{ __temp_dir.path }}/kubeconfig-infra"
+      - get
+      - statefulset
+      - "{{ snmpd_statefulset_name }}"
+      - --namespace
+      - "{{ snmpd_namespace }}"
+      - --ignore-not-found=true
+      - -o
+      - "jsonpath={.spec.template.metadata.annotations['{{ snmpd_image_digest_annotation_key }}']}"
+  register: __snmpd_deployed_digest_cmd
+  changed_when: false
+  failed_when: __snmpd_deployed_digest_cmd.rc != 0
+
+- name: Record deployed SNMPd image digest fact
+  ansible.builtin.set_fact:
+    snmpd_image_deployed_digest: "{{ __snmpd_deployed_digest_cmd.stdout | default('') | trim }}"
+
+- name: Determine if SNMPd image publish is required
+  ansible.builtin.set_fact:
+    snmpd_image_publish_required: >-
+      {{
+        (snmpd_force_rebuild_image | bool)
+        or ((snmpd_image_deployed_digest | default(''))
+            != (snmpd_image_current_digest | default('')))
+      }}
 
 - name: Tag SNMPd image for Kind import
   ansible.builtin.command:
@@ -48,6 +98,7 @@
       - "{{ __snmpd_image_local_ref }}"
       - "{{ __snmpd_image_registry_ref }}"
   register: __snmpd_image_tag_result
+  when: snmpd_image_publish_required | bool
   changed_when: __snmpd_image_tag_result.rc == 0
   failed_when: __snmpd_image_tag_result.rc != 0
 
@@ -62,6 +113,7 @@
   register: __snmpd_image_save
   changed_when: __snmpd_image_save.rc == 0
   failed_when: __snmpd_image_save.rc != 0
+  when: snmpd_image_publish_required | bool
 
 - name: Load SNMPd image archive into kind cluster
   ansible.builtin.command:
@@ -75,6 +127,7 @@
   register: __snmpd_kind_load
   changed_when: __snmpd_kind_load.rc == 0
   failed_when: __snmpd_kind_load.rc != 0
+  when: snmpd_image_publish_required | bool
 
 - name: Remove SNMPd image archive
   ansible.builtin.file:

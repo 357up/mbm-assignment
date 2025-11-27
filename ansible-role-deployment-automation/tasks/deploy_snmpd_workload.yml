@@ -1,11 +1,46 @@
 # Deploy SNMP workload into infra cluster
 ---
+- name: Prepare SNMP pod annotations with image digest
+  vars:
+    __snmpd_digest_value: "{{ snmpd_image_current_digest | default('') | string | trim }}"
+    __snmpd_digest_annotation: >-
+      {{
+        (__snmpd_digest_value | length > 0)
+        | ternary({snmpd_image_digest_annotation_key: __snmpd_digest_value}, {})
+      }}
+  ansible.builtin.set_fact:
+    snmpd_pod_annotations: >-
+      {{
+        (snmpd_pod_annotations | default({}))
+        | combine(__snmpd_digest_annotation, recursive=True)
+      }}
+
+- name: Check SNMP namespace presence
+  ansible.builtin.command:
+    cmd: >-
+      kubectl --kubeconfig {{ __temp_dir.path }}/kubeconfig-infra
+      get namespace {{ snmpd_namespace }}
+  register: __snmpd_namespace_get
+  changed_when: false
+  failed_when: __snmpd_namespace_get.rc not in [0, 1]
+
+- name: Create SNMP namespace when missing
+  ansible.builtin.command:
+    cmd: >-
+      kubectl --kubeconfig {{ __temp_dir.path }}/kubeconfig-infra
+      create namespace {{ snmpd_namespace }}
+  when: __snmpd_namespace_get.rc != 0
+  register: __snmpd_namespace_create
+  changed_when: (__snmpd_namespace_create.stdout | default('')) is search('created')
+  failed_when: __snmpd_namespace_create.rc != 0
+
 - name: Render SNMP credential secret manifest
   ansible.builtin.template:
     src: templates/k8s/infra/snmpd/secret.yaml.j2
     dest: "{{ __temp_dir.path }}/snmpd-secret.yaml"
     mode: "0644"
   register: __snmpd_secret_manifest
+  changed_when: false
 
 - name: Apply SNMP credential secret
   ansible.builtin.command:
@@ -25,6 +60,7 @@
     dest: "{{ __temp_dir.path }}/snmpd-workload.yaml"
     mode: "0644"
   register: __snmpd_manifest
+  changed_when: false
 
 - name: Apply SNMP workload manifest
   ansible.builtin.command:
