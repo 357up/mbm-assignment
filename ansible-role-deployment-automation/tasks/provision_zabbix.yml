@@ -222,3 +222,207 @@
     values_files: "{{ [__zabbix_proxy_values_file] if __zabbix_proxy_values_file is defined else omit }}"
     state: present
     binary_path: "{{ helm_binary_path }}"
+
+- name: Determine Zabbix API network endpoint
+  ansible.builtin.set_fact:
+    __zabbix_api_host: >-
+      {{
+        (zabbix_api_host | string | trim)
+        if (
+          zabbix_api_host is defined
+          and (zabbix_api_host | string | trim) | length > 0
+          and (zabbix_api_host | string | trim) | lower not in ['none', 'null']
+        )
+        else (
+          (zabbix_web_reverse_proxy_enabled | default(false) | bool)
+          | ternary('127.0.0.1', __zabbix_web_external_host)
+        )
+      }}
+    __zabbix_api_port: >-
+      {{
+        (
+          zabbix_api_port | string | trim
+        )
+        if (
+          zabbix_api_port is defined
+          and (zabbix_api_port | string | trim) | length > 0
+          and (zabbix_api_port | string | trim) | lower not in ['none', 'null']
+        )
+        else (
+          (zabbix_web_reverse_proxy_enabled | default(false) | bool)
+          | ternary(zabbix_web_reverse_proxy_host_port, mgmt_cluster_zabbix_web_service.port | default(80))
+        )
+      }}
+    __zabbix_api_use_ssl: "{{ zabbix_api_use_ssl | default(false) | bool }}"
+    __zabbix_api_validate_certs: "{{ (zabbix_api_validate_certs | default(zabbix_api_use_ssl | default(false))) | bool }}"
+    __zabbix_api_url_path: "{{ (zabbix_api_url_path | default('')) | regex_replace('^/+', '') | regex_replace('/+$', '') }}"
+    __zabbix_api_path: "{{ (zabbix_api_path | default('api_jsonrpc.php')) | regex_replace('^/+', '') }}"
+
+- name: Ensure Zabbix API host and port resolved
+  ansible.builtin.fail:
+    msg: Unable to determine a reachable host for the Zabbix API endpoint.
+  when: >-
+    (
+      (__zabbix_api_host | default('') | string | trim) | length == 0
+      or (__zabbix_api_host | default('') | string | trim) | lower in ['none', 'null']
+    )
+
+- name: Normalise Zabbix API port value
+  ansible.builtin.set_fact:
+    __zabbix_api_port: "{{ (__zabbix_api_port | default(0)) | int }}"
+
+- name: Ensure Zabbix API port is valid
+  ansible.builtin.fail:
+    msg: Unable to determine a valid port for the Zabbix API endpoint.
+  when: (__zabbix_api_port | int) <= 0
+
+- name: Determine Zabbix API scheme
+  ansible.builtin.set_fact:
+    __zabbix_api_scheme: "{{ 'https' if __zabbix_api_use_ssl | bool else 'http' }}"
+
+- name: Compute Zabbix API endpoint URL
+  ansible.builtin.set_fact:
+    __zabbix_api_endpoint: >-
+      {{
+        zabbix_api_endpoint_override
+        | default(
+            __zabbix_api_scheme
+            ~ '://'
+            ~ __zabbix_api_host
+            ~ ':'
+            ~ (__zabbix_api_port | int | string)
+            ~ '/'
+            ~ __zabbix_api_url_path
+            ~ '/'
+            ~ __zabbix_api_path,
+            true
+          )
+      }}
+
+- name: Determine Zabbix API credentials
+  ansible.builtin.set_fact:
+    __zabbix_api_target_username: "{{ mgmt_cluster_zabbix_admin_username }}"
+    __zabbix_api_target_password: "{{ mgmt_cluster_zabbix_admin_password }}"
+    __zabbix_api_initial_username: "{{ mgmt_cluster_zabbix_api_initial_username | default(mgmt_cluster_zabbix_admin_username) }}"
+    __zabbix_api_initial_password: "{{ mgmt_cluster_zabbix_api_initial_password | default(mgmt_cluster_zabbix_admin_password) }}"
+    __zabbix_api_login_user: "{{ mgmt_cluster_zabbix_api_initial_username | default(mgmt_cluster_zabbix_admin_username) }}"
+    __zabbix_api_login_password: "{{ mgmt_cluster_zabbix_api_initial_password | default(mgmt_cluster_zabbix_admin_password) }}"
+
+- name: Determine if Zabbix admin credentials differ from initial values
+  ansible.builtin.set_fact:
+    __zabbix_api_should_update_credentials: >-
+      {{
+        (__zabbix_api_target_username | string) != (__zabbix_api_initial_username | string)
+        or (__zabbix_api_target_password | string) != (__zabbix_api_initial_password | string)
+      }}
+
+- name: Validate requested Zabbix admin password
+  ansible.builtin.assert:
+    that:
+      - (__zabbix_api_target_password | string | length) >= 8
+    fail_msg: |
+      Requested Zabbix admin password must be at least 8 characters long when updating credentials.
+  when: __zabbix_api_should_update_credentials | bool
+
+- name: Wait for Zabbix API availability
+  ansible.builtin.uri:
+    url: "{{ __zabbix_api_endpoint }}"
+    method: POST
+    headers:
+      Content-Type: application/json-rpc
+    body_format: json
+    body:
+      jsonrpc: "2.0"
+      method: apiinfo.version
+      params: []
+      id: 1
+    return_content: true
+    status_code: 200
+    validate_certs: "{{ __zabbix_api_validate_certs }}"
+  register: __zabbix_api_ping
+  retries: "{{ zabbix_api_wait_retries | default(60) }}"
+  delay: "{{ zabbix_api_wait_delay | default(10) }}"
+  until: (__zabbix_api_ping.json is defined and __zabbix_api_ping.json.result is defined)
+  changed_when: false
+  when: zabbix_api_wait_for_ready | default(true)
+
+- name: Ensure desired Zabbix API user exists
+  when: mgmt_cluster_zabbix_api_manage_user | bool
+  vars:
+    ansible_network_os: community.zabbix.zabbix
+    ansible_connection: httpapi
+    ansible_host: "{{ __zabbix_api_host }}"
+    ansible_httpapi_port: "{{ __zabbix_api_port | int }}"
+    ansible_httpapi_use_ssl: "{{ __zabbix_api_use_ssl | bool }}"
+    ansible_httpapi_validate_certs: "{{ __zabbix_api_validate_certs | bool }}"
+    ansible_zabbix_url_path: "{{ __zabbix_api_url_path }}"
+    ansible_user: "{{ __zabbix_api_login_user }}"
+    ansible_httpapi_pass: "{{ __zabbix_api_login_password }}"
+  community.zabbix.zabbix_user:
+    username: "{{ __zabbix_api_target_username }}"
+    usrgrps: "{{ mgmt_cluster_zabbix_api_user_groups }}"
+    passwd: "{{ __zabbix_api_target_password }}"
+    override_passwd: "{{ __zabbix_api_should_update_credentials | bool }}"
+    current_passwd: "{{ (__zabbix_api_should_update_credentials | bool and __zabbix_api_login_user == __zabbix_api_initial_username) | ternary(__zabbix_api_initial_password, omit) }}"
+    role_name: "{{ mgmt_cluster_zabbix_api_role_name | default(omit) }}"
+    state: present
+
+- name: Switch Zabbix API session to managed credentials
+  ansible.builtin.set_fact:
+    __zabbix_api_login_user: >-
+      {{
+        (__zabbix_api_should_update_credentials | bool)
+        | ternary(__zabbix_api_target_username, __zabbix_api_login_user)
+      }}
+    __zabbix_api_login_password: >-
+      {{
+        (__zabbix_api_should_update_credentials | bool)
+        | ternary(__zabbix_api_target_password, __zabbix_api_login_password)
+      }}
+
+- name: Assemble Zabbix proxy registration payload
+  ansible.builtin.set_fact:
+    __zabbix_proxy_registration_payload: >-
+      {{
+        {
+          'proxy_name': (
+            infra_cluster_zabbix_proxy_registration_name
+            | default(infra_cluster_zabbix_proxy_hostname, true)
+          ),
+          'operating_mode': (
+            infra_cluster_zabbix_proxy_registration_operating_mode
+            | default(
+                (
+                  ((infra_cluster_zabbix_proxy_mode | default(0)) | int == 0)
+                  | ternary('active', 'passive')
+                ),
+                true
+              )
+          ),
+          'state': infra_cluster_zabbix_proxy_registration_state | default('present')
+        }
+        | combine(
+            {} if infra_cluster_zabbix_proxy_registration_description in [none, '']
+            else {'description': infra_cluster_zabbix_proxy_registration_description},
+            recursive=True
+          )
+        | combine(
+            infra_cluster_zabbix_proxy_registration_params | default({}),
+            recursive=True
+          )
+      }}
+  when: infra_cluster_zabbix_proxy_registration_enabled | bool
+
+- name: Register infra proxy with Zabbix server
+  when: infra_cluster_zabbix_proxy_registration_enabled | bool
+  vars:
+    ansible_network_os: community.zabbix.zabbix
+    ansible_connection: httpapi
+    ansible_host: "{{ __zabbix_api_host }}"
+    ansible_httpapi_port: "{{ __zabbix_api_port | int }}"
+    ansible_httpapi_use_ssl: "{{ __zabbix_api_use_ssl | bool }}"
+    ansible_httpapi_validate_certs: "{{ __zabbix_api_validate_certs | bool }}"
+    ansible_zabbix_url_path: "{{ __zabbix_api_url_path }}"
+    ansible_user: "{{ __zabbix_api_login_user }}"
+    ansible_httpapi_pass: "{{ __zabbix_api_login_password }}"
+  community.zabbix.zabbix_proxy: "{{ __zabbix_proxy_registration_payload }}"

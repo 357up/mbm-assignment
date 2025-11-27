@@ -51,3 +51,4 @@ dependencies: []
 collections:
   - kubernetes.core
   - containers.podman
+  - community.zabbix

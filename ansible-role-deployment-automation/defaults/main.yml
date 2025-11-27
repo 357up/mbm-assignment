@@ -133,3 +133,33 @@ infra_cluster_zabbix_proxy_mode: 0
 infra_cluster_zabbix_proxy_hostname: zabbix-proxy
 infra_cluster_zabbix_proxy_server_port: 10051
 infra_cluster_zabbix_proxy_values_overrides: {}
+
+# Zabbix API credential management defaults.
+mgmt_cluster_zabbix_admin_username: Admin
+mgmt_cluster_zabbix_admin_password: zabbix
+mgmt_cluster_zabbix_api_initial_username: "{{ mgmt_cluster_zabbix_admin_username }}"
+mgmt_cluster_zabbix_api_initial_password: "{{ mgmt_cluster_zabbix_admin_password }}"
+mgmt_cluster_zabbix_api_user_groups:
+  - Zabbix administrators
+mgmt_cluster_zabbix_api_role_name: ~
+mgmt_cluster_zabbix_api_manage_user: true
+
+# Zabbix API connectivity defaults.
+zabbix_api_host: ~
+zabbix_api_port: ~
+zabbix_api_use_ssl: false
+zabbix_api_url_path: ""
+zabbix_api_path: api_jsonrpc.php
+zabbix_api_validate_certs: "{{ zabbix_api_use_ssl | bool }}"
+zabbix_api_wait_retries: 60
+zabbix_api_wait_delay: 10
+zabbix_api_endpoint_override: ~
+zabbix_api_wait_for_ready: true
+
+# Zabbix proxy registration defaults.
+infra_cluster_zabbix_proxy_registration_enabled: true
+infra_cluster_zabbix_proxy_registration_name: ~
+infra_cluster_zabbix_proxy_registration_description: ~
+infra_cluster_zabbix_proxy_registration_operating_mode: ~
+infra_cluster_zabbix_proxy_registration_state: present
+infra_cluster_zabbix_proxy_registration_params: {}
